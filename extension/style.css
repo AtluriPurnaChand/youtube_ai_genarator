@@ -1,0 +1,119 @@
+/* ============================================================
+   YouTube AI Media Detector – Overlay Styles
+   ============================================================ */
+
+/* ── Badge container ────────────────────────────────────────── */
+#yt-ai-detector-badge {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end; /* Align to right */
+  gap: 6px;
+  pointer-events: none;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+/* Specific adjustment for Shorts where buttons are on the right */
+ytd-shorts #yt-ai-detector-badge,
+.reel-video-in-sequence #yt-ai-detector-badge {
+  right: 60px; /* Move left to clear Shorts buttons */
+  top: 20px;
+}
+
+/* ── Main label chip ────────────────────────────────────────── */
+#yt-ai-detector-badge .badge-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 10px;
+  border-radius: 100px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: #fff;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  transition: background 0.35s ease, transform 0.2s ease;
+  pointer-events: none;
+}
+
+/* ── Icon inside chip ───────────────────────────────────────── */
+#yt-ai-detector-badge .badge-icon {
+  font-size: 17px;
+  line-height: 1;
+}
+
+/* ── Content-type colour themes ─────────────────────────────── */
+.badge-real {
+  background: rgba(22, 163, 74, 0.82);
+}
+
+/* green  */
+.badge-ai {
+  background: rgba(139, 92, 246, 0.88);
+}
+
+/* violet */
+.badge-cartoon {
+  background: rgba(234, 179, 8, 0.85);
+}
+
+/* amber  */
+.badge-game {
+  background: rgba(14, 165, 233, 0.85);
+}
+
+/* cyan   */
+.badge-deepfake {
+  background: rgba(220, 38, 38, 0.88);
+}
+
+/* red    */
+.badge-error {
+  background: rgba(75, 85, 99, 0.80);
+}
+
+/* grey   */
+.badge-loading {
+  background: rgba(30, 30, 30, 0.75);
+}
+
+/* dark   */
+
+/* ── Confidence bar ─────────────────────────────────────────── */
+#yt-ai-detector-badge .confidence-bar-wrapper {
+  width: 130px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 100px;
+  overflow: hidden;
+}
+
+#yt-ai-detector-badge .confidence-bar-fill {
+  height: 100%;
+  border-radius: 100px;
+  background: linear-gradient(90deg, #38bdf8, #818cf8);
+  transition: width 0.5s ease;
+}
+
+/* ── Pulse animation while loading ─────────────────────────── */
+@keyframes pulse-badge {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.badge-loading .badge-chip-inner {
+  animation: pulse-badge 1.4s ease-in-out infinite;
+}

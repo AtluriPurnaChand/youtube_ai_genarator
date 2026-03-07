@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+.venv
+env/
+bin/
+lib/
+share/
+
+# Extension
+icons/*.png
+!icons/icon16.png
+!icons/icon48.png
+!icons/icon128.png
+
+# OS
+.DS_Store
+Thumbs.db

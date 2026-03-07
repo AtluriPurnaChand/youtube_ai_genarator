@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube AI Media Detector",
+  "version": "1.0.0",
+  "description": "Detects AI-generated content, deepfakes, cartoons, and video game footage on YouTube videos and Shorts.",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "http://localhost:8000/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content.js"],
+      "css": ["style.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "YouTube AI Media Detector"
+  }
+}

@@ -1,0 +1,32 @@
+# Core web framework
+fastapi>=0.110.0
+uvicorn>=0.29.0
+python-multipart>=0.0.9
+
+# Image / array
+Pillow>=9.4.0
+numpy>=1.24.0
+
+# Deep learning  (let pip choose compatible builds)
+torch>=2.1.0
+torchvision>=0.16.0
+
+# Computer vision
+opencv-python>=4.8.0
+
+# Face detection
+facenet-pytorch>=2.5.3
+
+# NLP / CLIP
+transformers>=4.36.0
+ftfy>=6.1.1
+regex>=2023.12.25
+tqdm>=4.65.0
+
+# Misc
+scipy>=1.11.0
+scikit-image>=0.21.0
+requests>=2.31.0
+
+# Optional: for native CLIP performance (requires git/compilers)
+git+https://github.com/openai/CLIP.git
