@@ -8,14 +8,15 @@ A real-time, AI-powered system consisting of a **Chrome Extension** and a **Fast
 
 *   **Real-time Analysis**: Captures and analyzes frames as you watch.
 *   **Multi-Model Pipeline**: Uses CLIP for scene recognition and specialized ViTs for deepfake detection.
+*   **Metadata Integration**: Scrapes video Title and Description to identify AI disclosures.
 *   **Safety-First Aggregation**: Flags videos even if only a few frames show high-confidence manipulation.
-*   **YouTube Shorts Support**: Optimized badge placement for the Shorts vertical player.
+*   **YouTube Shorts Support**: Optimized badge placement and metadata extraction for Shorts.
 *   **Premium UI**: Glassmorphism-style badge with live progress bars.
 
 ---
 
 ## 🛠️ Performance Optimizations
-The system now supports the **native CLIP library** for significantly faster scene classification. 
+The system supports the **native CLIP library** for significantly faster scene classification. 
 > [!TIP]
 > This optimization reduces the latency of the initial "Cartoon vs. Real" check on hardware with modern compilers.
 
@@ -39,22 +40,18 @@ youtube-ai-detector/
 
 ---
 
-## ⚙️ Installation & Setup
+## ⚙️ Installation & Setup (VS Code)
 
 ### 1. Backend Setup
-1.  Navigate to the `backend` folder and create a virtual environment:
+1.  Open **VS Code** and navigate to the `backend` folder.
+2.  Create and activate a fresh virtual environment:
     ```powershell
-    cd backend
     python -m venv venv
     .\venv\Scripts\Activate.ps1
     ```
-2.  Install the required libraries:
+3.  Install the required libraries:
     ```powershell
     pip install -r requirements.txt
-    ```
-3.  **(Optional)** Install native CLIP for maximum speed:
-    ```powershell
-    pip install git+https://github.com/openai/CLIP.git
     ```
 4.  Launch the server:
     ```powershell
@@ -63,17 +60,19 @@ youtube-ai-detector/
 
 ### 2. Extension Setup
 1.  Open **Google Chrome** and go to `chrome://extensions`.
-2.  Turn on **Developer Mode** (top right).
-3.  Click **Load Unpacked** and select the `/extension` folder from this project.
-4.  Open any YouTube video and look for the analysis badge!
+2.  Enable **Developer Mode** (top right).
+3.  Click **Load Unpacked** and select the `/extension` folder.
+4.  Open any YouTube video or **Short** and look for the analysis badge!
 
 ---
 
-## 🧠 AI Pipeline Logic
-The analysis follows a "Security-First" workflow:
-1.  **Scene Classification (CLIP)**: Identifies if the video is a `cartoon_animation` or `video_game`.
-2.  **Face Detection (MTCNN)**: If humans are present, it extracts face crops.
-3.  **Deepfake Analysis (ViT)**: If faces are found, it runs a specialized deepfake model (`dima806/deepfake_vs_real_image_detection`), overriding the scene classifier to ensure human-looking fakes are caught.
+## 🧠 AI Pipeline Logic (Refined)
+The system uses a **multi-modal** approach for >80% accuracy:
+1.  **Metadata Analysis**: Scrapes Title/Description for keywords (Sora, Kling, "AI generated", etc.).
+2.  **Scene Classification (CLIP)**: Uses refined prompts for better synthetic texture detection.
+3.  **Face Detection (MTCNN)**: Extracts human faces if present.
+4.  **Deepfake Analysis (ViT)**: Specialized model (`dima806/deepfake_vs_real_image_detection`) for facial manipulation.
+5.  **Weighted Signal Aggregation**: Combines all signals into a final classification.
 
 ---
 
