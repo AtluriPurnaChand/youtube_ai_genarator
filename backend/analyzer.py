@@ -23,12 +23,13 @@ logger.info(f"Using device: {DEVICE}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CLIP scene-classification labels
+# Optimized for distinguishing AI textures vs real-world camera noise
 # ──────────────────────────────────────────────────────────────────────────────
 SCENE_LABELS = [
-    "a real photograph or live video footage of a person or scene",
-    "an AI generated image or AI generated video frame",
-    "a cartoon or animation frame",
-    "video game footage or computer game graphics",
+    "a high-quality photograph or realistic cinematic camera footage of a real-world scene, realistic textures, natural lighting",
+    "an AI-generated synthetic video frame, Sora video, artificial textures, digital artifacts, distorted details, synthetic imagery",
+    "a cartoon, anime, 2D or 3D animation, stylized illustration, non-photorealistic",
+    "computer-generated imagery from a video game, CGI gameplay, 3D engine render, low-poly or high-res gaming graphics",
 ]
 
 LABEL_TO_TYPE = {
@@ -278,39 +279,104 @@ def detect_deepfake(faces: list[Image.Image]) -> dict:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Text analysis (metadata)
+# ──────────────────────────────────────────────────────────────────────────────
+def analyze_text(metadata: dict) -> dict:
+    """
+    Analyzes video title and description for keywords indicating AI-generated content.
+    Returns a score from 0.0 to 1.0 (1.0 = definitely AI generated).
+    """
+    title = metadata.get("title", "").lower()
+    desc = metadata.get("description", "").lower()
+    full_text = f"{title} {desc}"
+
+    # High-confidence indicators (often explicitly stated)
+    ai_keywords = [
+        "ai generated", "ai-generated", "ai video", "synthetic media", 
+        "generated with ai", "created with ai", "sora", "runway gen", 
+        "stable video diffusion", "pika labs", "kling ai", "luma dream machine",
+        "flux ai", "midjourney video"
+    ]
+    
+    # Check for keywords
+    matches = [kw for kw in ai_keywords if kw in full_text]
+    
+    if matches:
+        logger.info(f"AI keywords found in metadata: {matches}")
+        return {"score": 0.95, "reason": f"AI keyword(s) found: {', '.join(matches)}"}
+    
+    # Middle indicators (may be AI or just tech-related)
+    soft_keywords = ["ai", "prompt", "artificial intelligence", "generative"]
+    soft_matches = [kw for kw in soft_keywords if kw in full_text]
+    if soft_matches:
+        return {"score": 0.4, "reason": "Weak AI context found"}
+
+    return {"score": 0.0, "reason": "No AI keywords found"}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main entry point
 # ──────────────────────────────────────────────────────────────────────────────
-def analyze_frame(b64_image: str) -> dict:
+def analyze_frame(b64_image: str, metadata: dict | None = None) -> dict:
     """
     Optimized analysis pipeline for speed.
     """
+    if metadata is None:
+        metadata = {}
+
     try:
         img = decode_image(b64_image)
-        # Resizing removed -> Extension now sends 224px (native model size).
-
+        
         with torch.inference_mode():
-            # ── Step 1: CLIP scene classification ─────────────────────────────────
+            # ── Step 1: Text analysis (Metadata) ──────────────────────────────────
+            text_result = analyze_text(metadata)
+            text_score = text_result["score"]
+
+            # ── Step 2: CLIP scene classification ─────────────────────────────────
             clip_result = classify_scene(img)
             logger.info(f"CLIP result: {clip_result}")
 
-            # If CLIP is very confident it's a non-human category (cartoon/game) -> trust it
-            # We use a higher threshold (0.85) to avoid false positives for stylized real video
-            if clip_result["type"] in ["cartoon_animation", "video_game"] and clip_result["confidence"] > 0.85:
-                return clip_result
-
-            # ── Step 2: Face detection ─────────────────────────────────────────────
+            # ── Step 3: Face detection & Deepfake Analysis ────────────────────────
             faces = detect_faces(img)
             logger.info(f"Detected {len(faces)} face(s) in frame.")
 
-            # If faces are detected, ALWAYS run deepfake check, even if CLIP says "real_video"
-            # Deepfakes are designed to look like real videos, so CLIP alone isn't enough.
             if faces:
                 deepfake_result = detect_deepfake(faces)
-                logger.info(f"Deepfake result: {deepfake_result}")
-                return deepfake_result
+                # If deepfake is detected, it usually overrides other's labels
+                if deepfake_result["type"] == "deepfake_detected":
+                    return deepfake_result
 
-            # If no faces were found, return the initial CLIP classification
-            return clip_result
+            # ── Step 4: Weighted Signal Aggregation ───────────────────────────────
+            # Weights: 
+            # - Visual (CLIP) provides the base classification.
+            # - Text (Metadata) is a strong bias if keywords are found.
+
+            final_type = clip_result["type"]
+            final_conf = clip_result["confidence"]
+
+            # If text analysis is very confident (0.95), and visual is "real" or "ai"
+            if text_score > 0.90:
+                if clip_result["type"] in ["real_video", "ai_generated"]:
+                    final_type = "ai_generated"
+                    # Weighted boost: 70% Text, 30% Visual
+                    final_conf = (0.7 * text_score) + (0.3 * clip_result["confidence"])
+            
+            # If CLIP says it's AI, and text doesn't contradict it (score >= 0)
+            elif clip_result["type"] == "ai_generated" and clip_result["confidence"] > 0.6:
+                # Neutral boost if soft keywords are present
+                if text_score > 0.3:
+                    final_conf = min(0.99, final_conf + 0.1)
+
+            # Safety threshold: if visual is "real" but text is very AI-heavy
+            if final_type == "real_video" and text_score > 0.90:
+                # Override to AI Generated but with lower confidence (unclear case)
+                final_type = "ai_generated"
+                final_conf = 0.7
+
+            return {
+                "type": final_type,
+                "confidence": round(float(final_conf), 4)
+            }
 
     except Exception as exc:
         logger.exception("Frame analysis failed")

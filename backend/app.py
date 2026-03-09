@@ -50,6 +50,10 @@ class FrameRequest(BaseModel):
         ...,
         description="Base64-encoded image (JPEG/PNG), optionally prefixed with a data-URI header.",
     )
+    metadata: dict = Field(
+        default={},
+        description="Optional metadata like 'title' and 'description' of the video.",
+    )
 
 
 class AnalysisResult(BaseModel):
@@ -94,7 +98,7 @@ async def analyze(req: FrameRequest):
     if not req.image:
         raise HTTPException(status_code=400, detail="'image' field is required.")
 
-    result = analyze_frame(req.image)
+    result = analyze_frame(req.image, metadata=req.metadata)
 
     if result.get("type") == "error":
         logger.error(f"Analysis error: {result.get('detail')}")

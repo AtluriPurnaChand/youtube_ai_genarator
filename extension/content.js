@@ -190,14 +190,49 @@
   }
 
   /* ================================================================
+     METADATA EXTRACTION
+  ================================================================ */
+
+  /** Extract title and description for both regular videos and shorts */
+  function getMetadata() {
+    const isShorts = location.pathname.startsWith("/shorts/");
+    let title = "";
+    let description = "";
+
+    if (isShorts) {
+      // Shorts metadata
+      title = document.querySelector("yt-shorts-video-title-view-model h2 span")?.innerText || "";
+      // Description is often in a specific renderer
+      description = document.querySelector("ytd-structured-description-content-renderer yt-formatted-string")?.innerText || "";
+
+      // If description is empty, try to find the 'more' button overlay content if it exists
+      if (!description) {
+        description = document.querySelector("#description-text")?.innerText || "";
+      }
+    } else {
+      // Regular video metadata
+      title = document.querySelector("ytd-watch-metadata #title h1 yt-formatted-string")?.innerText || "";
+      // Get the description text (handles collapsed/expanded)
+      description = document.querySelector("ytd-watch-metadata #description-inline-expander yt-formatted-string")?.innerText
+        || document.querySelector("#description-text")?.innerText
+        || "";
+    }
+
+    return {
+      title: title.trim(),
+      description: description.trim().substring(0, 1000), // Limit length for speed
+    };
+  }
+
+  /* ================================================================
      API CALL
   ================================================================ */
 
-  async function analyzeFrame(b64Image) {
+  async function analyzeFrame(b64Image, metadata) {
     const resp = await fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image: b64Image }),
+      body: JSON.stringify({ image: b64Image, metadata: metadata }),
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     return await resp.json();   // { type, confidence }
@@ -240,15 +275,21 @@
     const interval = ANALYSIS_WINDOW / (SAMPLE_COUNT - 1 || 1);
     const pendingRequests = [];
 
+    const metadata = getMetadata();
+    console.log("[AI Detector] Analyzing with metadata:", metadata);
+
     for (let i = 0; i < SAMPLE_COUNT; i++) {
       setBadgeAnalyzing(i + 1);
 
       const frame = captureFrame(video);
       if (frame) {
         // Fire request without awaiting it here
-        const request = analyzeFrame(frame)
+        const request = analyzeFrame(frame, metadata)
           .catch(err => {
-            console.warn("[AI Detector] Backend error:", err.message);
+            console.error("[AI Detector] Backend error:", err.message);
+            if (err.message.includes("Failed to fetch")) {
+              return { type: "error", confidence: 0, detail: "Backend Offline" };
+            }
             return { type: "error", confidence: 0 };
           });
         pendingRequests.push(request);
