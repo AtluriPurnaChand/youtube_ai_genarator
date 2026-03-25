@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YouTube AI Media Detector</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 280px;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #0f0f0f;
+      color: #e5e5e5;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .header-icon { font-size: 26px; }
+    .header-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1.3;
+    }
+    .header-version {
+      font-size: 10px;
+      color: rgba(255,255,255,0.45);
+      margin-top: 2px;
+    }
+
+    /* ── Status card ── */
+    .status-card {
+      margin: 14px 14px 0;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .status-label {
+      font-size: 12px;
+      color: rgba(255,255,255,0.55);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .status-pill.checking  { background: rgba(100,100,100,0.3); color: #aaa; }
+    .status-pill.online    { background: rgba(22,163,74,0.25);  color: #4ade80; border: 1px solid rgba(74,222,128,0.3); }
+    .status-pill.offline   { background: rgba(220,38,38,0.2);   color: #f87171; border: 1px solid rgba(248,113,113,0.3); }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; }
+    .status-dot.checking { background: #aaa; }
+    .status-dot.online   { background: #4ade80; box-shadow: 0 0 6px #4ade80; animation: dot-pulse 2s infinite; }
+    .status-dot.offline  { background: #f87171; }
+
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    /* ── Model list ── */
+    .models-section {
+      margin: 10px 14px 0;
+    }
+    .models-title {
+      font-size: 10px;
+      color: rgba(255,255,255,0.35);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 6px;
+    }
+    .model-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      font-size: 12px;
+    }
+    .model-row:last-child { border-bottom: none; }
+    .model-name { color: rgba(255,255,255,0.7); }
+    .model-status { font-size: 13px; }
+    .model-spinner {
+      width: 12px; height: 12px;
+      border: 2px solid rgba(255,255,255,0.15);
+      border-top-color: #60a5fa;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Device row ── */
+    .device-row {
+      margin: 10px 14px 0;
+      font-size: 11px;
+      color: rgba(255,255,255,0.35);
+      display: flex;
+      justify-content: space-between;
+    }
+    .device-val { color: rgba(255,255,255,0.6); font-weight: 600; }
+
+    /* ── Help section ── */
+    .help-section {
+      margin: 10px 14px 14px;
+      padding: 10px 12px;
+      background: rgba(96, 165, 250, 0.08);
+      border: 1px solid rgba(96,165,250,0.15);
+      border-radius: 8px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.55);
+      line-height: 1.5;
+    }
+    .help-section strong { color: rgba(255,255,255,0.8); }
+
+    /* ── Footer ── */
+    .footer {
+      border-top: 1px solid rgba(255,255,255,0.06);
+      padding: 8px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .footer-link {
+      font-size: 11px;
+      color: #60a5fa;
+      text-decoration: none;
+    }
+    .footer-link:hover { text-decoration: underline; }
+    .footer-tip { font-size: 10px; color: rgba(255,255,255,0.25); }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-icon">🔍</div>
+    <div>
+      <div class="header-title">YouTube AI Media Detector</div>
+      <div class="header-version">v1.1.0</div>
+    </div>
+  </div>
+
+  <!-- Backend Status -->
+  <div class="status-card">
+    <div class="status-label">Backend</div>
+    <div class="status-pill checking" id="status-pill">
+      <div class="status-dot checking" id="status-dot"></div>
+      <span id="status-text">Checking…</span>
+    </div>
+  </div>
+
+  <!-- AI Model status rows -->
+  <div class="models-section" id="models-section" style="display:none">
+    <div class="models-title">Loaded Models</div>
+    <div class="model-row">
+      <span class="model-name">CLIP (scene classifier)</span>
+      <span class="model-status" id="model-clip"><div class="model-spinner"></div></span>
+    </div>
+    <div class="model-row">
+      <span class="model-name">MTCNN (face detector)</span>
+      <span class="model-status" id="model-mtcnn"><div class="model-spinner"></div></span>
+    </div>
+    <div class="model-row">
+      <span class="model-name">Deepfake ViT</span>
+      <span class="model-status" id="model-deepfake"><div class="model-spinner"></div></span>
+    </div>
+  </div>
+
+  <!-- Device -->
+  <div class="device-row" id="device-row" style="display:none">
+    <span>Compute Device</span>
+    <span class="device-val" id="device-val">—</span>
+  </div>
+
+  <!-- Help text -->
+  <div class="help-section">
+    <strong>How it works:</strong> The extension captures frames from the video
+    playing in your tab and sends them to your local Python backend for AI analysis.
+    The result badge appears in the top-right of the video player.
+    <br/><br/>
+    Make sure the backend is running:<br/>
+    <strong>uvicorn app:app --port 8000</strong>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <a class="footer-link" href="https://github.com/AtluriPurnaChand/youtube_ai_genarator" target="_blank">GitHub ↗</a>
+    <span class="footer-tip">localhost:8000</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

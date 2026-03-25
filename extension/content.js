@@ -1,27 +1,66 @@
 /**
- * YouTube AI Media Detector – Content Script
+ * YouTube AI Media Detector – Content Script  v1.3.0
  *
- * - Works on regular YouTube videos  (/watch?v=...)
- * - Works on YouTube Shorts          (/shorts/...)
- * - Captures 5 frames per second for 5 seconds (25 frames total)
- * - Sends each frame to the local FastAPI backend
- * - Shows a "Analyzing…" badge while collecting, then ONE final result
- * - Badge fixed to the TOP-RIGHT corner of the video player
+ * ADAPTIVE PARALLEL PROGRESSIVE SAMPLING
+ * ──────────────────────────────────────
+ *  Frame count and interval scale automatically with video.duration:
+ *
+ *  Duration          Frames   Interval   Sample window
+ *  ──────────────────────────────────────────────────
+ *  < 30 s  (Short)      4       5 s        ~20 s
+ *  30–90 s (Short)      6       8 s        ~45 s
+ *  1.5–5 min           12      12 s       ~2.2 min
+ *  5–15 min            16      18 s       ~4.8 min
+ *  > 15 min            20      25 s        ~8 min
+ *
+ *  All requests are fired IN PARALLEL — badge updates LIVE as each
+ *  response arrives so you see a result within seconds, not minutes.
  */
 
 ; (function () {
   "use strict";
 
   /* ================================================================
-     CONFIG
+     CONFIG  (bounds only — actual counts computed per video)
   ================================================================ */
   const API_URL = "http://localhost:8000/analyze";
-  const ANALYSIS_WINDOW = 5000;   // Total analysis window: 5 seconds
-  const SAMPLE_COUNT = 25;       // 5 frames per second (25 total)
   const BADGE_ID = "yt-ai-detector-badge";
+  const RECYCLE_WAIT = 60000;   // ms before re-scanning after a cycle ends
+
+  const MIN_FRAMES = 4;       // never fewer than 4 frames
+  const MAX_FRAMES = 20;      // never more than 20 frames
+  const MIN_INTERVAL = 3000;    // at least 3 s between captures
+  const MAX_INTERVAL = 30000;   // at most 30 s between captures
+  const COVERAGE = 0.85;    // cover this fraction of video duration
+  const MAX_WINDOW = 10 * 60 * 1000;  // cap sampling window at 10 min
+
+  /**
+   * Compute frame count & interval from video duration.
+   *
+   *  Duration  → Frames  Interval   Window
+   *  < 30 s        4       5 s      ~20 s
+   *  30–90 s       6       8 s      ~45 s
+   *  1.5–5 min    12      12 s     ~2 min
+   *  5–15 min     16      18 s     ~5 min
+   *  > 15 min     20      25 s     ~8 min
+   */
+  function computeSamplingPlan(durationSec) {
+    // 1 frame per ~45 s of video (rounded), clamped to [MIN_FRAMES, MAX_FRAMES]
+    const rawFrames = Math.round(durationSec / 45);
+    const frameCount = Math.min(MAX_FRAMES, Math.max(MIN_FRAMES, rawFrames));
+
+    // Sample window = coverage fraction of video, capped at MAX_WINDOW
+    const windowMs = Math.min(durationSec * COVERAGE * 1000, MAX_WINDOW);
+
+    // Spread frameCount captures evenly across windowMs
+    const rawInterval = windowMs / Math.max(frameCount - 1, 1);
+    const intervalMs = Math.min(MAX_INTERVAL, Math.max(MIN_INTERVAL, Math.round(rawInterval)));
+
+    return { frameCount, intervalMs, windowMs };
+  }
 
   /* ================================================================
-     LABEL MAP  (backend type → display text + icon + CSS class)
+     LABEL MAP
   ================================================================ */
   const LABELS = {
     real_video: { text: "Real Video", icon: "✅", cls: "badge-real" },
@@ -30,21 +69,24 @@
     video_game: { text: "Video Game", icon: "🎮", cls: "badge-game" },
     deepfake_detected: { text: "⚠ Deepfake", icon: "👤", cls: "badge-deepfake" },
     error: { text: "Detection Error", icon: "❓", cls: "badge-error" },
+    offline: { text: "Backend Offline", icon: "🔌", cls: "badge-offline" },
   };
 
   /* ================================================================
      STATE
   ================================================================ */
-  let analysisTimer = null;   // setTimeout handle for next analysis cycle
+  let cycleTimer = null;
   let lastVideoEl = null;
   let lastPlayerEl = null;
-  let isAnalyzing = false;  // Guard: don't start a new cycle mid-analysis
+  let isRunning = false;
+
+  let accumulatedResults = [];
+  let framesCaptured = 0;
 
   /* ================================================================
      UTILITIES
   ================================================================ */
 
-  /** Find the active <video> element on the page */
   function findVideo() {
     const candidates = Array.from(document.querySelectorAll("video"));
     return candidates
@@ -54,67 +96,65 @@
       || null;
   }
 
-  /** Find the nearest ancestor that is the YT player container */
   function findPlayerContainer(videoEl) {
     let el = videoEl?.parentElement;
     while (el) {
-      // Regular YT player
-      if (el.id === "movie_player" || el.classList.contains("html5-video-player")) {
-        return el;
-      }
-      // Shorts player (desktop/mobile layout)
+      if (el.id === "movie_player" || el.classList.contains("html5-video-player")) return el;
       if (
         el.tagName === "YTD-SHORTS" ||
         el.classList.contains("reel-video-in-sequence") ||
         el.id === "shorts-container" ||
         el.classList.contains("video-stream")
-      ) {
-        // Find the inner-most container that isn't the video element itself
-        return el;
-      }
+      ) return el;
       el = el.parentElement;
     }
     return videoEl?.parentElement || document.body;
   }
 
-  /** Simple majority-vote over an array of result objects */
+  /**
+   * Confidence-weighted majority vote.
+   * Deepfake safety-first: any high-confidence deepfake detection overrides.
+   */
   function pickBestResult(results) {
-    if (!results.length) return { type: "error", confidence: 0 };
+    if (!results.length) return null;
 
-    // ── SAFETY-FIRST AGGREGATION ──
-    // If any frame is flagged as deepfake with >= 75% confidence,
-    // OR if more than 15% of frames (e.g. 4/25) are flagged with >= 60% confidence,
-    // we prioritize "deepfake_detected" even if the majority says real.
-    const deepfakes = results.filter(r => r.type === "deepfake_detected");
-    const highConfDeepfake = deepfakes.find(r => r.confidence >= 0.75);
-    const suspiciousCount = deepfakes.filter(r => r.confidence >= 0.60).length;
-
-    if (highConfDeepfake || (suspiciousCount >= Math.max(1, SAMPLE_COUNT * 0.15))) {
-      const avgDeepfakeConf = deepfakes.reduce((s, r) => s + (r.confidence || 0), 0) / (deepfakes.length || 1);
-      return { type: "deepfake_detected", confidence: Math.max(avgDeepfakeConf, highConfDeepfake?.confidence || 0) };
+    const valid = results.filter(r => r.type !== "error" && r.type !== "offline");
+    if (!valid.length) {
+      if (results.some(r => r.detail === "Backend Offline")) return { type: "offline", confidence: 0 };
+      return { type: "error", confidence: 0, detail: results[0]?.detail || "Backend error" };
     }
 
-    // Otherwise, do standard confidence-weighted voting
+    // Deepfake priority
+    const deepfakes = valid.filter(r => r.type === "deepfake_detected");
+    if (deepfakes.length) {
+      const highConf = deepfakes.find(r => r.confidence >= 0.72);
+      const suspicious = deepfakes.filter(r => r.confidence >= 0.58).length;
+      if (highConf || suspicious >= Math.max(1, Math.floor(valid.length * 0.15))) {
+        const avg = deepfakes.reduce((s, r) => s + r.confidence, 0) / deepfakes.length;
+        return {
+          type: "deepfake_detected",
+          confidence: Math.max(avg, highConf?.confidence || 0),
+          reason: deepfakes[0]?.reason || "",
+        };
+      }
+    }
+
+    // Confidence-weighted vote
     const scores = {};
-    for (const r of results) {
-      if (!scores[r.type]) scores[r.type] = 0;
-      scores[r.type] += (r.confidence || 0);
-    }
-
+    for (const r of valid) scores[r.type] = (scores[r.type] || 0) + (r.confidence || 0);
     const bestType = Object.keys(scores).reduce((a, b) => scores[a] >= scores[b] ? a : b);
-    const matching = results.filter(r => r.type === bestType);
+    const matching = valid.filter(r => r.type === bestType);
     const avgConf = matching.reduce((s, r) => s + (r.confidence || 0), 0) / matching.length;
 
-    return { type: bestType, confidence: avgConf };
+    return { type: bestType, confidence: avgConf, reason: matching[0]?.reason || "" };
   }
 
   /* ================================================================
      BADGE
   ================================================================ */
 
-  function createBadge(player) {
-    removeBadge();
-
+  function ensureBadge(player) {
+    if (document.getElementById(BADGE_ID)) return;
     const pos = window.getComputedStyle(player).position;
     if (pos === "static") player.style.position = "relative";
 
@@ -123,49 +163,73 @@
     badge.innerHTML = `
       <div class="badge-chip badge-loading">
         <span class="badge-icon">🔍</span>
-        <span class="badge-label">Analyzing…</span>
+        <span class="badge-label">Scanning…</span>
       </div>
       <div class="confidence-bar-wrapper">
         <div class="confidence-bar-fill" style="width:0%"></div>
       </div>
     `;
     player.appendChild(badge);
-    return badge;
   }
 
   function removeBadge() {
     document.getElementById(BADGE_ID)?.remove();
   }
 
-  function setBadgeAnalyzing(currentSample) {
+  /** Update badge while scanning: shows interim result + frame counter */
+  function setBadgeScanning(framesReceived, framesTotal, interimResult) {
     const badge = document.getElementById(BADGE_ID);
     if (!badge) return;
+
     const chip = badge.querySelector(".badge-chip");
-    chip.className = "badge-chip badge-loading";
-    chip.innerHTML = `
-      <span class="badge-icon">🔍</span>
-      <span class="badge-label">Analyzing… (${currentSample}/${SAMPLE_COUNT})</span>
-    `;
     const fill = badge.querySelector(".confidence-bar-fill");
-    fill.style.width = `${Math.round((currentSample / SAMPLE_COUNT) * 100)}%`;
+
+    if (interimResult && framesReceived >= 1) {
+      const info = LABELS[interimResult.type] || LABELS.error;
+      const confPct = Math.round((interimResult.confidence || 0) * 100);
+      chip.className = `badge-chip ${info.cls}`;
+      chip.innerHTML = `
+        <span class="badge-icon">${info.icon}</span>
+        <span class="badge-label">${info.text} ${confPct}%
+          <span class="badge-scanning-tag">&nbsp;·&nbsp;${framesReceived}/${framesTotal}</span>
+        </span>
+      `;
+      fill.style.width = `${confPct}%`;
+    } else {
+      chip.className = "badge-chip badge-loading";
+      chip.innerHTML = `
+        <span class="badge-icon">🔍</span>
+        <span class="badge-label">Scanning… (${framesReceived}/${framesTotal})</span>
+      `;
+      fill.style.width = `${Math.round((framesReceived / framesTotal) * 100)}%`;
+    }
   }
 
-  function updateBadge(result) {
+  /** Lock in the final result after all frames are processed */
+  function setFinalBadge(result) {
     const badge = document.getElementById(BADGE_ID);
     if (!badge) return;
 
+    const isError = result.type === "error";
+    const isOffline = result.type === "offline";
     const info = LABELS[result.type] || LABELS.error;
     const pct = Math.round((result.confidence || 0) * 100);
 
     const chip = badge.querySelector(".badge-chip");
     chip.className = `badge-chip ${info.cls}`;
+
+    let labelText;
+    if (isError && result.detail) labelText = result.detail;
+    else if (isOffline) labelText = "Backend Offline";
+    else labelText = `${info.text} &nbsp;${pct}%`;
+
     chip.innerHTML = `
       <span class="badge-icon">${info.icon}</span>
-      <span class="badge-label">${info.text} &nbsp;${pct}%</span>
+      <span class="badge-label">${labelText}</span>
     `;
 
     const fill = badge.querySelector(".confidence-bar-fill");
-    fill.style.width = `${pct}%`;
+    fill.style.width = (isError || isOffline) ? "0%" : `${pct}%`;
   }
 
   /* ================================================================
@@ -175,13 +239,11 @@
   function captureFrame(videoEl) {
     try {
       const canvas = document.createElement("canvas");
-      // Use 224px directly — native size for CLIP/ViT models, saves bandwidth and CPU
+      // 224 px — native size for CLIP/ViT, minimises payload
       const scale = Math.min(1, 224 / Math.max(videoEl.videoHeight, 1));
       canvas.width = Math.round(videoEl.videoWidth * scale);
       canvas.height = Math.round(videoEl.videoHeight * scale);
-
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+      canvas.getContext("2d").drawImage(videoEl, 0, 0, canvas.width, canvas.height);
       return canvas.toDataURL("image/jpeg", 0.5);
     } catch (e) {
       console.warn("[AI Detector] Frame capture error:", e);
@@ -190,172 +252,178 @@
   }
 
   /* ================================================================
-     METADATA EXTRACTION
+     METADATA
   ================================================================ */
 
-  /** Extract title and description for both regular videos and shorts */
   function getMetadata() {
     const isShorts = location.pathname.startsWith("/shorts/");
-    let title = "";
-    let description = "";
-
+    let title = "", description = "";
     if (isShorts) {
-      // Shorts metadata
       title = document.querySelector("yt-shorts-video-title-view-model h2 span")?.innerText || "";
-      // Description is often in a specific renderer
-      description = document.querySelector("ytd-structured-description-content-renderer yt-formatted-string")?.innerText || "";
-
-      // If description is empty, try to find the 'more' button overlay content if it exists
-      if (!description) {
-        description = document.querySelector("#description-text")?.innerText || "";
-      }
+      description = document.querySelector("ytd-structured-description-content-renderer yt-formatted-string")?.innerText
+        || document.querySelector("#description-text")?.innerText || "";
     } else {
-      // Regular video metadata
       title = document.querySelector("ytd-watch-metadata #title h1 yt-formatted-string")?.innerText || "";
-      // Get the description text (handles collapsed/expanded)
       description = document.querySelector("ytd-watch-metadata #description-inline-expander yt-formatted-string")?.innerText
-        || document.querySelector("#description-text")?.innerText
-        || "";
+        || document.querySelector("#description-text")?.innerText || "";
     }
-
-    return {
-      title: title.trim(),
-      description: description.trim().substring(0, 1000), // Limit length for speed
-    };
+    return { title: title.trim(), description: description.trim().substring(0, 1000) };
   }
 
   /* ================================================================
      API CALL
   ================================================================ */
 
-  async function analyzeFrame(b64Image, metadata) {
+  async function sendFrame(b64Image, metadata) {
     const resp = await fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image: b64Image, metadata: metadata }),
+      body: JSON.stringify({ image: b64Image, metadata }),
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    return await resp.json();   // { type, confidence }
+    return await resp.json();   // { type, confidence, reason }
   }
 
   /* ================================================================
-     MAIN ANALYSIS CYCLE  (runs once every ~10 seconds)
+     ADAPTIVE PARALLEL PROGRESSIVE ANALYSIS CYCLE
   ================================================================ */
 
-  async function runAnalysisCycle() {
-    if (isAnalyzing) return;
+  /**
+   * One complete analysis cycle.
+   * Frame count and interval are calculated fresh from video.duration
+   * at the start of every cycle.
+   */
+  async function runCycle() {
+    if (isRunning) return;
 
     const video = findVideo();
-    if (!video) {
-      scheduleNextCycle();
-      return;
-    }
+    if (!video) { scheduleCycle(RECYCLE_WAIT); return; }
 
-    // Re-attach badge if the video element changed
+    // Attach/recreate badge if player changed
     if (video !== lastVideoEl) {
       lastVideoEl = video;
       lastPlayerEl = findPlayerContainer(video);
-      if (lastPlayerEl) createBadge(lastPlayerEl);
     }
+    if (!lastPlayerEl) { scheduleCycle(RECYCLE_WAIT); return; }
+    if (video.paused || video.ended) { scheduleCycle(5000); return; }
 
-    if (!lastPlayerEl) {
-      scheduleNextCycle();
-      return;
-    }
+    // ── Compute adaptive sampling plan from actual video duration ──
+    const durationSec = isFinite(video.duration) && video.duration > 0
+      ? video.duration
+      : 90;    // fallback: treat unknown duration as ~90 s Short
 
-    // Skip capture while paused / ended
-    if (video.paused || video.ended) {
-      scheduleNextCycle();
-      return;
-    }
+    const { frameCount, intervalMs, windowMs } = computeSamplingPlan(durationSec);
 
-    isAnalyzing = true;
-
-    // ── Collect SAMPLE_COUNT frames at strict intervals ──
-    const interval = ANALYSIS_WINDOW / (SAMPLE_COUNT - 1 || 1);
-    const pendingRequests = [];
+    isRunning = true;
+    accumulatedResults = [];
+    framesCaptured = 0;
+    ensureBadge(lastPlayerEl);
 
     const metadata = getMetadata();
-    console.log("[AI Detector] Analyzing with metadata:", metadata);
+    console.log(
+      `[AI Detector] Cycle: duration=${durationSec.toFixed(0)}s → ` +
+      `${frameCount} frames every ${(intervalMs / 1000).toFixed(1)}s ` +
+      `(window=${(windowMs / 1000).toFixed(0)}s)`
+    );
 
-    for (let i = 0; i < SAMPLE_COUNT; i++) {
-      setBadgeAnalyzing(i + 1);
+    // ── Inner callback: fires when each parallel request resolves ──
+    function onResult(result, idx) {
+      if (result.type !== "error") accumulatedResults.push(result);
+      framesCaptured = Math.max(framesCaptured, idx + 1);
+      const interim = accumulatedResults.length > 0 ? pickBestResult(accumulatedResults) : null;
+      setBadgeScanning(framesCaptured, frameCount, interim);
+      console.log(
+        `[AI Detector] Frame ${idx + 1}/${frameCount}: ` +
+        `${result.type} (${((result.confidence || 0) * 100).toFixed(0)}%) ` +
+        (result.reason || "")
+      );
+    }
 
-      const frame = captureFrame(video);
-      if (frame) {
-        // Fire request without awaiting it here
-        const request = analyzeFrame(frame, metadata)
-          .catch(err => {
-            console.error("[AI Detector] Backend error:", err.message);
-            if (err.message.includes("Failed to fetch")) {
-              return { type: "error", confidence: 0, detail: "Backend Offline" };
-            }
-            return { type: "error", confidence: 0 };
-          });
-        pendingRequests.push(request);
+    // ── Capture frames & fire to backend in parallel ───────────────
+    const framePromises = [];
+    for (let i = 0; i < frameCount; i++) {
+      const frameData = captureFrame(video);
+
+      if (frameData) {
+        const idx = i;
+        framePromises.push(
+          sendFrame(frameData, metadata)
+            .then(res => { onResult(res, idx); return res; })
+            .catch(err => {
+              console.error(`[AI Detector] Frame ${idx + 1} error:`, err.message);
+              const r = {
+                type: "error", confidence: 0,
+                detail: err.message.includes("Failed to fetch") ? "Backend Offline" : err.message,
+              };
+              onResult(r, idx);
+              return r;
+            })
+        );
+      } else {
+        framesCaptured = Math.max(framesCaptured, i + 1);
       }
 
-      // Wait exactly 'interval' to ensure capture fits the 5s window
-      if (i < SAMPLE_COUNT - 1) {
-        await sleep(interval);
+      // Wait before next capture to spread samples across playback time
+      if (i < frameCount - 1) {
+        await sleep(intervalMs);
+        if (!isRunning) return;             // navigation cancelled cycle
+        if (video.paused || video.ended) {
+          console.log("[AI Detector] Video paused — awaiting remaining requests");
+          break;
+        }
       }
     }
 
-    // ── Wait for all backend responses to finish ──
-    const results = await Promise.all(pendingRequests);
+    // ── Wait for ALL responses then lock in final badge ───────────
+    await Promise.allSettled(framePromises);
 
-    // ── Show the single aggregated result ──
-    const finalResult = pickBestResult(results);
-    updateBadge(finalResult);
+    const finalResult = pickBestResult(accumulatedResults);
+    if (finalResult) {
+      setFinalBadge(finalResult);
+      console.log(
+        `[AI Detector] Final: ${finalResult.type} ` +
+        `(${((finalResult.confidence || 0) * 100).toFixed(0)}%) ` +
+        `from ${accumulatedResults.length}/${frameCount} valid frames`
+      );
+    }
 
-    isAnalyzing = false;
-
-    // Schedule the next full cycle
-    scheduleNextCycle();
+    isRunning = false;
+    scheduleCycle(RECYCLE_WAIT);
   }
 
-  function scheduleNextCycle() {
-    if (analysisTimer) clearTimeout(analysisTimer);
-    // Next analysis starts after the full window completes
-    analysisTimer = setTimeout(runAnalysisCycle, ANALYSIS_WINDOW);
+  function scheduleCycle(delayMs) {
+    if (cycleTimer) clearTimeout(cycleTimer);
+    cycleTimer = setTimeout(runCycle, delayMs);
   }
 
-  function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
+  function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
   /* ================================================================
      OBSERVER – react to YouTube's SPA navigation
   ================================================================ */
 
   function handleNavigation() {
-    isAnalyzing = false;
-    if (analysisTimer) clearTimeout(analysisTimer);
-    analysisTimer = null;
-
+    isRunning = false;
+    if (cycleTimer) clearTimeout(cycleTimer);
+    cycleTimer = null;
+    accumulatedResults = [];
+    framesCaptured = 0;
     removeBadge();
     lastVideoEl = null;
     lastPlayerEl = null;
-
-    // Wait briefly for the new player to mount, then begin
-    setTimeout(runAnalysisCycle, 1500);
+    setTimeout(runCycle, 1500);
   }
 
-  // YouTube is a SPA – listen for URL changes
   let lastHref = location.href;
   const navObserver = new MutationObserver(() => {
-    if (location.href !== lastHref) {
-      lastHref = location.href;
-      handleNavigation();
-    }
+    if (location.href !== lastHref) { lastHref = location.href; handleNavigation(); }
   });
   navObserver.observe(document.body, { childList: true, subtree: true });
 
-  // Also react to yt-navigate-finish custom event
   document.addEventListener("yt-navigate-finish", handleNavigation);
 
-  // Initial start (short delay so the player can load)
-  setTimeout(runAnalysisCycle, 1500);
+  // Initial start
+  setTimeout(runCycle, 1500);
 
-  console.log("[YouTube AI Media Detector] Content script loaded ✓");
+  console.log("[YouTube AI Media Detector] v1.3.0 — adaptive parallel sampling ✓");
 })();

@@ -1,5 +1,5 @@
 /* ============================================================
-   YouTube AI Media Detector – Overlay Styles
+   YouTube AI Media Detector – Overlay Styles  v1.1.0
    ============================================================ */
 
 /* ── Badge container ────────────────────────────────────────── */
@@ -10,16 +10,19 @@
   z-index: 9999;
   display: flex;
   flex-direction: column;
-  align-items: flex-end; /* Align to right */
+  align-items: flex-end;
   gap: 6px;
   pointer-events: none;
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  /* Slide in from the right when first shown */
+  animation: slide-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 /* Specific adjustment for Shorts where buttons are on the right */
 ytd-shorts #yt-ai-detector-badge,
 .reel-video-in-sequence #yt-ai-detector-badge {
-  right: 60px; /* Move left to clear Shorts buttons */
+  right: 60px;
+  /* Move left to clear Shorts buttons */
   top: 20px;
 }
 
@@ -53,37 +56,42 @@ ytd-shorts #yt-ai-detector-badge,
   background: rgba(22, 163, 74, 0.82);
 }
 
-/* green  */
+/* green   */
 .badge-ai {
   background: rgba(139, 92, 246, 0.88);
 }
 
-/* violet */
+/* violet  */
 .badge-cartoon {
   background: rgba(234, 179, 8, 0.85);
 }
 
-/* amber  */
+/* amber   */
 .badge-game {
   background: rgba(14, 165, 233, 0.85);
 }
 
-/* cyan   */
+/* cyan    */
 .badge-deepfake {
   background: rgba(220, 38, 38, 0.88);
 }
 
-/* red    */
+/* red     */
 .badge-error {
   background: rgba(75, 85, 99, 0.80);
 }
 
-/* grey   */
+/* grey    */
+.badge-offline {
+  background: rgba(180, 70, 0, 0.85);
+}
+
+/* orange  */
 .badge-loading {
   background: rgba(30, 30, 30, 0.75);
 }
 
-/* dark   */
+/* dark    */
 
 /* ── Confidence bar ─────────────────────────────────────────── */
 #yt-ai-detector-badge .confidence-bar-wrapper {
@@ -94,14 +102,50 @@ ytd-shorts #yt-ai-detector-badge,
   overflow: hidden;
 }
 
+/* Confidence bar fill colour matches badge type */
 #yt-ai-detector-badge .confidence-bar-fill {
   height: 100%;
   border-radius: 100px;
   background: linear-gradient(90deg, #38bdf8, #818cf8);
-  transition: width 0.5s ease;
+  transition: width 0.5s ease, background 0.35s ease;
 }
 
-/* ── Pulse animation while loading ─────────────────────────── */
+.badge-real~.confidence-bar-wrapper .confidence-bar-fill {
+  background: linear-gradient(90deg, #4ade80, #22c55e);
+}
+
+.badge-deepfake~.confidence-bar-wrapper .confidence-bar-fill {
+  background: linear-gradient(90deg, #f87171, #ef4444);
+}
+
+.badge-ai~.confidence-bar-wrapper .confidence-bar-fill {
+  background: linear-gradient(90deg, #a78bfa, #8b5cf6);
+}
+
+/* ── Scanning frame counter tag ─────────────────────────────── */
+#yt-ai-detector-badge .badge-scanning-tag {
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.75;
+  letter-spacing: 0;
+}
+
+/* ── Animations ─────────────────────────────────────────────── */
+
+/* Slide in from the right when badge first appears */
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Pulse while loading — applied to .badge-chip directly */
 @keyframes pulse-badge {
 
   0%,
@@ -114,6 +158,6 @@ ytd-shorts #yt-ai-detector-badge,
   }
 }
 
-.badge-loading .badge-chip-inner {
+.badge-loading {
   animation: pulse-badge 1.4s ease-in-out infinite;
 }

@@ -1,95 +1,126 @@
 # 🎥 YouTube AI Media Detector
 
-A real-time, AI-powered system consisting of a **Chrome Extension** and a **FastAPI Backend** to detect and classify YouTube video content. It identifies whether a video is authentic, AI-generated, a deepfake, or computer-generated (games/cartoons).
+[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](https://github.com/AtluriPurnaChand/youtube_ai_genarator)
+[![Python](https://img.shields.io/badge/python-3.9+-yellow.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Privacy](https://img.shields.io/badge/Privacy-100%25%20Local-orange.svg)](#)
+
+A real-time, privacy-first AI system designed to detect and classify YouTube content directly on your local hardware. By combining a **Chrome Extension** and a high-performance **FastAPI Backend**, this tool identifies AI-generated videos, deepfakes, and CGI without sending your data to any cloud service.
 
 ---
 
-## 🚀 Key Features
+## 🌟 Key Features
 
-*   **Real-time Analysis**: Captures and analyzes frames as you watch.
-*   **Multi-Model Pipeline**: Uses CLIP for scene recognition and specialized ViTs for deepfake detection.
-*   **Metadata Integration**: Scrapes video Title and Description to identify AI disclosures.
-*   **Safety-First Aggregation**: Flags videos even if only a few frames show high-confidence manipulation.
-*   **YouTube Shorts Support**: Optimized badge placement and metadata extraction for Shorts.
-*   **Premium UI**: Glassmorphism-style badge with live progress bars.
-
----
-
-## 🛠️ Performance Optimizations
-The system supports the **native CLIP library** for significantly faster scene classification. 
-> [!TIP]
-> This optimization reduces the latency of the initial "Cartoon vs. Real" check on hardware with modern compilers.
+*   **100% Local Inference**: Your CPU/GPU handles all AI processing — no API keys required.
+*   **Adaptive Sampling**: Scalable frame analysis based on video duration for precision and speed.
+*   **Multi-Model Pipeline**: Uses CLIP (scene), MTCNN (face detection), and specialized ViT (deepfake detection).
+*   **Progressive UI**: Instant feedback with live-updating scanning progress and results.
+*   **Self-Healing Core**: Built-in runtime patches for environment issues (e.g., OneDrive metadata corruption).
+*   **Premium Glassmorphism UI**: A sleek badge that integrates seamlessly into the YouTube player.
 
 ---
 
-## 📂 Folder Structure
+## 📋 Prerequisites
 
+Before you begin, ensure you have the following installed:
+- **Python 3.9+**
+- **Google Chrome** (or any Chromium-based browser like Brave or Edge)
+- **Git**
+
+---
+
+## 🚀 Installation & Setup
+
+### 1. Clone the Repository
+```bash
+git clone https://github.com/AtluriPurnaChand/youtube_ai_genarator.git
+cd youtube_ai_genarator
+```
+
+### 2. Backend Setup (Local AI Server)
+The backend requires a Python environment to run the AI models.
+
+```bash
+cd backend
+# Create a virtual environment
+python -m venv venv
+
+# Activate the environment
+# On Windows:
+venv\Scripts\activate
+# On Linux/macOS:
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Start the server
+python app.py
+```
+*The server will start at `http://127.0.0.1:8000`.*
+
+### 3. Chrome Extension Setup
+1. Open Chrome and navigate to `chrome://extensions/`.
+2. Enable **Developer mode** (toggle in the top-right corner).
+3. Click **Load unpacked**.
+4. Select the `extension` folder from this repository.
+
+---
+
+## 🎮 How to Use
+1. Ensure the **FastAPI Backend** is running.
+2. Open any video on [YouTube](https://www.youtube.com).
+3. A "Scanning" badge will appear automatically at the top-right of the video player.
+4. Wait for the analysis to complete (usually 2–10 seconds depending on video length).
+5. Click the badge for detailed classification results.
+
+---
+
+## 📏 Adaptive Sampling Strategy (v1.4.0)
+
+| Video Type | Duration | Frames | Interval | Coverage |
+|---|---|---|---|---|
+| **Short** | < 30s | 4 | 5s | ~20s |
+| **Short / Reel** | 30s – 90s | 6 | 8s | ~45s |
+| **Standard** | 1.5m – 5m | 12 | 12s | ~2.5m |
+| **Long-form** | 5m – 15m | 16 | 18s | ~5m |
+| **Deep Scan** | > 15m | 20 | 25s | ~10m |
+
+---
+
+## 🛠 Tech Stack
+
+- **Backend**: FastAPI, PyTorch, Transformers (CLIP, ViT), MTCNN (Face Detection), PIL.
+- **Extension**: Manifest V3, Content Scripts, Vanilla JS, CSS Glassmorphism.
+
+---
+
+## ❓ Troubleshooting
+
+**Q: The badge says "Backend Offline".**
+> A: Ensure your Python server is running (`python app.py`) and that it is accessible at `http://localhost:8000`. Check for firewall blocks.
+
+**Q: Analysis is very slow.**
+> A: Local AI inference depends on your CPU/GPU. First-time runs may be slower as models are downloaded to your local cache.
+
+**Q: Metadata check isn't working.**
+> A: Ensure the video page has fully loaded. The extension scans titles and descriptions for AI disclosures automatically.
+
+---
+
+## 📂 Project Structure
 ```text
 youtube-ai-detector/
-├── backend/
-│   ├── app.py            ← FastAPI endpoint
-│   ├── analyzer.py       ← Core AI Pipeline (Logic Refined ✓)
-│   └── requirements.txt  ← Dependencies (Native CLIP added ✓)
-├── extension/
-│   ├── manifest.json     ← Extension config
-│   ├── content.js        ← Frame capture & aggregation logic
-│   ├── style.css         ← Glassmorphism & Shorts UI fixes
-│   └── icons/            ← Extension branding
-└── generate_icons.py     ← Utility to create needed icon sizes
+├── backend/            # FastAPI Server & AI Models
+├── extension/          # Chrome Extension Files
+├── generate_icons.py   # Utility script for icons
+└── test_verification.py# Verification suite
 ```
 
 ---
 
-## ⚙️ Installation & Setup (VS Code)
-
-### 1. Backend Setup
-1.  Open **VS Code** and navigate to the `backend` folder.
-2.  Create and activate a fresh virtual environment:
-    ```powershell
-    python -m venv venv
-    .\venv\Scripts\Activate.ps1
-    ```
-3.  Install the required libraries:
-    ```powershell
-    pip install -r requirements.txt
-    ```
-4.  Launch the server:
-    ```powershell
-    uvicorn app:app --host 0.0.0.0 --port 8000 --reload
-    ```
-
-### 2. Extension Setup
-1.  Open **Google Chrome** and go to `chrome://extensions`.
-2.  Enable **Developer Mode** (top right).
-3.  Click **Load Unpacked** and select the `/extension` folder.
-4.  Open any YouTube video or **Short** and look for the analysis badge!
+## 📄 License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
-
-## 🧠 AI Pipeline Logic (Refined)
-The system uses a **multi-modal** approach for >80% accuracy:
-1.  **Metadata Analysis**: Scrapes Title/Description for keywords (Sora, Kling, "AI generated", etc.).
-2.  **Scene Classification (CLIP)**: Uses refined prompts for better synthetic texture detection.
-3.  **Face Detection (MTCNN)**: Extracts human faces if present.
-4.  **Deepfake Analysis (ViT)**: Specialized model (`dima806/deepfake_vs_real_image_detection`) for facial manipulation.
-5.  **Weighted Signal Aggregation**: Combines all signals into a final classification.
-
----
-
-## 📊 Classification Labels
-
-| Label | Description |
-|---|---|
-| ✅ **Real Video** | Authentic, unmodified live footage. |
-| 🤖 **AI Generated** | High-level synthetic generation (Sora, Kling, etc.). |
-| 🎨 **Cartoon / Anime** | 2D or 3D animated content. |
-| 🎮 **Video Game** | CGI or computer-generated gameplay. |
-| 👤 **⚠ Deepfake** | Specific human face manipulation detected. |
-
----
-
-## 🔗 Project Link
-GitHub Repository: [https://github.com/AtluriPurnaChand/youtube_ai_genarator](https://github.com/AtluriPurnaChand/youtube_ai_genarator)
-
----
-*Created as part of the AI-Powered Deepfake Detection for YouTube project.*
+*Developed by [AtluriPurnaChand](https://github.com/AtluriPurnaChand)*
